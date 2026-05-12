@@ -19,7 +19,7 @@ except ImportError:
 
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").lstrip("﻿").strip()
-GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip()
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").lstrip("﻿").strip()
 
 if not GEMINI_API_KEY or GEMINI_API_KEY == "여기에_API_키를_입력하세요":
     raise EnvironmentError(".env 파일에 GEMINI_API_KEY를 입력해주세요.")
