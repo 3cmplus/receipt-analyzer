@@ -1,6 +1,7 @@
 google-genai
 python-dotenv
 flask
+openpyxl
 customtkinter
 pillow
 tkinterdnd2
