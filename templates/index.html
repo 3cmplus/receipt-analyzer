@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>영수증 분석기</title>
+<style>
+  :root {
+    --bg:#f5f7fa;--card:#fff;--border:#e2e8f0;
+    --primary:#4f46e5;--primary-light:#eef2ff;
+    --text:#1e293b;--muted:#64748b;
+    --green:#16a34a;--red:#dc2626;--radius:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Segoe UI','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:40px 20px;}
+  .container{max-width:800px;margin:0 auto;}
+  header{text-align:center;margin-bottom:36px;}
+  header h1{font-size:1.8rem;font-weight:700;color:var(--primary);}
+  header p{margin-top:8px;color:var(--muted);font-size:.95rem;}
+
+  .upload-area{border:2px dashed #a5b4fc;border-radius:var(--radius);background:var(--primary-light);padding:52px 24px;text-align:center;cursor:pointer;transition:all .2s;}
+  .upload-area:hover,.upload-area.dragover{border-color:var(--primary);background:#e0e7ff;}
+  .upload-area .icon{font-size:3rem;margin-bottom:12px;}
+  .upload-area p{color:var(--muted);font-size:.95rem;line-height:1.6;}
+  .upload-area strong{color:var(--primary);}
+  #fileInput{display:none;}
+
+  .preview-wrap{display:none;margin-top:20px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:var(--card);padding:16px;text-align:center;}
+  .preview-wrap img{max-width:100%;max-height:320px;border-radius:8px;object-fit:contain;}
+  .preview-name{margin-top:10px;font-size:.85rem;color:var(--muted);}
+
+  .btn{display:block;width:100%;margin-top:16px;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius);font-size:1rem;font-weight:600;cursor:pointer;transition:opacity .2s;}
+  .btn:hover{opacity:.88;}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+
+  /* 엑셀 저장 버튼 */
+  .btn-excel{display:none;width:100%;margin-top:10px;padding:13px;background:#16a34a;color:#fff;border:none;border-radius:var(--radius);font-size:.95rem;font-weight:600;cursor:pointer;transition:opacity .2s;}
+  .btn-excel:hover{opacity:.88;}
+  .btn-excel.saved{background:#0f766e;}
+
+  .loading{display:none;text-align:center;padding:32px;color:var(--muted);}
+  .spinner{width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .result-card{display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-top:28px;overflow:hidden;}
+  .result-header{background:var(--primary);color:#fff;padding:16px 22px;font-size:1.05rem;font-weight:600;}
+  .result-body{padding:22px;}
+
+  /* 요약 그리드: 4칸 */
+  .summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+  @media(max-width:620px){.summary-grid{grid-template-columns:1fr 1fr;}}
+  .summary-item{background:var(--bg);border-radius:8px;padding:12px 14px;}
+  .summary-item .label{font-size:.75rem;color:var(--muted);margin-bottom:5px;}
+  .summary-item .value{font-size:.95rem;font-weight:700;color:var(--text);word-break:break-all;}
+  .summary-item.total .value{color:var(--primary);font-size:1.1rem;}
+  /* 주소는 두 칸 차지 */
+  .summary-item.addr{grid-column:span 2;}
+  @media(max-width:620px){.summary-item.addr{grid-column:span 2;}}
+
+  .table-title{font-size:.88rem;font-weight:600;color:var(--muted);margin-bottom:10px;letter-spacing:.5px;}
+  table{width:100%;border-collapse:collapse;font-size:.9rem;}
+  thead{background:#f8fafc;}
+  th{text-align:left;padding:10px 14px;color:var(--muted);font-weight:600;font-size:.82rem;border-bottom:2px solid var(--border);}
+  td{padding:11px 14px;border-bottom:1px solid var(--border);}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#f8fafc;}
+  .num{text-align:right;}
+
+  .error-box{display:none;margin-top:20px;padding:16px 20px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius);color:var(--red);font-size:.9rem;}
+  .toast{display:none;margin-top:10px;padding:11px 18px;background:#dcfce7;border:1px solid #86efac;border-radius:8px;color:var(--green);font-size:.88rem;text-align:center;}
+
+  .btn-reset{margin-top:16px;padding:10px 22px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:.88rem;cursor:pointer;transition:all .2s;}
+  .btn-reset:hover{border-color:var(--primary);color:var(--primary);}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>영수증 분석기</h1>
+    <p>영수증 이미지를 업로드하면 Gemini AI가 항목을 자동으로 추출합니다</p>
+  </header>
+
+  <div class="upload-area" id="uploadArea">
+    <div class="icon">🧾</div>
+    <p><strong>클릭하거나 이미지를 여기에 끌어다 놓으세요</strong><br>JPG, PNG, WEBP 지원</p>
+    <input type="file" id="fileInput" accept="image/*"/>
+  </div>
+
+  <div class="preview-wrap" id="previewWrap">
+    <img id="previewImg" src="" alt="미리보기"/>
+    <div class="preview-name" id="previewName"></div>
+  </div>
+
+  <button class="btn" id="analyzeBtn" disabled>분석 시작</button>
+  <button class="btn-excel" id="excelBtn">📥 엑셀로 저장</button>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <p>Gemini AI가 영수증을 분석 중입니다…</p>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+  <div class="toast"   id="toast"></div>
+
+  <div class="result-card" id="resultCard">
+    <div class="result-header">분석 결과</div>
+    <div class="result-body">
+
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="label">결제일시</div>
+          <div class="value" id="rDate">-</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">가맹점명</div>
+          <div class="value" id="rStore">-</div>
+        </div>
+        <div class="summary-item addr">
+          <div class="label">주소</div>
+          <div class="value" id="rAddr">-</div>
+        </div>
+        <div class="summary-item total" style="grid-column:span 2;">
+          <div class="label">총 금액</div>
+          <div class="value" id="rTotal">-</div>
+        </div>
+      </div>
+
+      <div class="table-title">항목 상세</div>
+      <table>
+        <thead>
+          <tr>
+            <th>품목명</th>
+            <th class="num">수량</th>
+            <th class="num">단가</th>
+            <th class="num">금액</th>
+          </tr>
+        </thead>
+        <tbody id="itemBody"></tbody>
+      </table>
+
+      <button class="btn-reset" id="resetBtn">다른 영수증 분석하기</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const uploadArea  = document.getElementById('uploadArea');
+const fileInput   = document.getElementById('fileInput');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg  = document.getElementById('previewImg');
+const previewName = document.getElementById('previewName');
+const analyzeBtn  = document.getElementById('analyzeBtn');
+const excelBtn    = document.getElementById('excelBtn');
+const loading     = document.getElementById('loading');
+const errorBox    = document.getElementById('errorBox');
+const resultCard  = document.getElementById('resultCard');
+const resetBtn    = document.getElementById('resetBtn');
+const toast       = document.getElementById('toast');
+
+let selectedFile = null;
+let lastResult   = null;
+
+uploadArea.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+uploadArea.addEventListener('dragover',  e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  if (!file.type.startsWith('image/')) { showError('이미지 파일만 업로드 가능합니다.'); return; }
+  selectedFile = file;
+  previewImg.src = URL.createObjectURL(file);
+  previewName.textContent = file.name;
+  previewWrap.style.display = 'block';
+  analyzeBtn.disabled = false;
+  resultCard.style.display = 'none';
+  excelBtn.style.display = 'none';
+  errorBox.style.display = 'none';
+  toast.style.display = 'none';
+}
+
+analyzeBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  analyzeBtn.disabled = true;
+  loading.style.display = 'block';
+  resultCard.style.display = 'none';
+  excelBtn.style.display = 'none';
+  errorBox.style.display = 'none';
+  toast.style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('image', selectedFile);
+  try {
+    const res  = await fetch('/analyze', { method:'POST', body:fd });
+    const data = await res.json();
+    if (data.error) { showError(data.error); return; }
+    renderResult(data);
+  } catch(e) {
+    showError('서버 통신 오류가 발생했습니다.');
+  } finally {
+    loading.style.display = 'none';
+    analyzeBtn.disabled = false;
+  }
+});
+
+function renderResult(d) {
+  lastResult = d;
+  document.getElementById('rDate').textContent  = d['결제일시']  || '-';
+  document.getElementById('rStore').textContent = d['가맹점명']  || '-';
+  document.getElementById('rAddr').textContent  = d['주소']      || '-';
+
+  const total = d['총금액'];
+  document.getElementById('rTotal').textContent =
+    (total && total !== '확인불가') ? Number(total).toLocaleString() + '원' : (total || '-');
+
+  const tbody = document.getElementById('itemBody');
+  tbody.innerHTML = '';
+  (d['항목'] || []).forEach(item => {
+    const qty = item['수량'] || '-', price = item['단가'] || '-', name = item['품목명'] || '-';
+    const amt = (qty !== '-' && price !== '-') ? (parseInt(qty)*parseInt(price)).toLocaleString()+'원' : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${name}</td><td class="num">${qty}</td>
+      <td class="num">${price!=='-'?Number(price).toLocaleString()+'원':'-'}</td>
+      <td class="num">${amt}</td>`;
+    tbody.appendChild(tr);
+  });
+  if (!tbody.children.length)
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">항목 없음</td></tr>';
+
+  resultCard.style.display = 'block';
+  excelBtn.style.display   = 'block';
+  excelBtn.textContent = '📥 엑셀로 저장';
+  excelBtn.classList.remove('saved');
+}
+
+excelBtn.addEventListener('click', async () => {
+  if (!lastResult) return;
+  excelBtn.disabled = true;
+  try {
+    const res = await fetch('/save-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lastResult),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      showError(err.error || '저장 실패'); return;
+    }
+    // 파일 다운로드
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = '영수증_내역.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+    excelBtn.textContent = '✅ 다운로드 완료';
+    excelBtn.classList.add('saved');
+    showToast('영수증_내역.xlsx 다운로드 완료!');
+  } catch(e) {
+    showError('다운로드 중 오류가 발생했습니다.');
+  } finally {
+    excelBtn.disabled = false;
+  }
+});
+
+function showError(msg) {
+  errorBox.textContent = '오류: ' + msg;
+  errorBox.style.display = 'block';
+  loading.style.display  = 'none';
+  analyzeBtn.disabled    = false;
+}
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+resetBtn.addEventListener('click', () => {
+  selectedFile = null; lastResult = null;
+  fileInput.value = '';
+  previewWrap.style.display = 'none';
+  resultCard.style.display  = 'none';
+  excelBtn.style.display    = 'none';
+  errorBox.style.display    = 'none';
+  toast.style.display       = 'none';
+  analyzeBtn.disabled = true;
+});
+</script>
+</body>
+</html>
