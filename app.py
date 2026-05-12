@@ -73,10 +73,13 @@ def analyze():
             mimetype="application/json; charset=utf-8"
         )
 
-    except json.JSONDecodeError:
-        return jsonify({"error": "Gemini 응답을 파싱하지 못했습니다.", "raw": text}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        tb = traceback.format_exc()
+        return Response(
+            json.dumps({"error": str(e), "traceback": tb}, ensure_ascii=False),
+            status=500, mimetype="application/json; charset=utf-8"
+        )
 
 
 @app.route("/save-excel", methods=["POST"])
