@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import io, json, re
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, render_template, Response
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY, GEMINI_MODEL
@@ -8,8 +8,23 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 app = Flask(__name__)
-app.json.ensure_ascii = False          # 한글 JSON 응답 허용 (Flask 2.3+)
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def jres(data, status=200):
+    """항상 UTF-8 JSON 응답을 반환하는 헬퍼."""
+    return Response(
+        json.dumps(data, ensure_ascii=False, default=str),
+        status=status,
+        mimetype="application/json; charset=utf-8",
+    )
+
+
+@app.errorhandler(Exception)
+def handle_any(e):
+    import traceback
+    return jres({"error": repr(e), "traceback": traceback.format_exc()}, 500)
+
 
 PROMPT = """이 영수증 이미지를 꼼꼼히 분석해서 아래 JSON 형식으로만 응답해줘.
 JSON 외에 다른 텍스트, 설명, 마크다운 코드블록은 절대 포함하지 마.
@@ -31,106 +46,90 @@ JSON 외에 다른 텍스트, 설명, 마크다운 코드블록은 절대 포함
 - 금액은 쉼표 없이 숫자만 반환 (예: 12000)
 """
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    if "image" not in request.files:
-        return jsonify({"error": "이미지 파일이 없습니다."}), 400
+    if "image" not in request.files or not request.files["image"].filename:
+        return jres({"error": "이미지 파일이 없습니다."}, 400)
 
     file = request.files["image"]
-    if file.filename == "":
-        return jsonify({"error": "파일을 선택해주세요."}), 400
-
     mime_type = file.content_type or "image/jpeg"
     image_bytes = file.read()
 
-    try:
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                PROMPT,
-            ],
-        )
-        # BOM·공백·마크다운 코드블록 제거
-        text = response.text.replace('﻿', '').strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            PROMPT,
+        ],
+    )
 
-        # JSON 객체만 추출
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            text = match.group()
+    # BOM·공백·코드블록 제거
+    text = response.text.replace("﻿", "").replace("​", "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
 
-        result = json.loads(text)
-        # ensure_ascii=False 로 한글 직렬화
-        from flask import Response
-        return Response(
-            json.dumps(result, ensure_ascii=False),
-            mimetype="application/json; charset=utf-8"
-        )
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        text = match.group()
 
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        return Response(
-            json.dumps({"error": str(e), "traceback": tb}, ensure_ascii=False),
-            status=500, mimetype="application/json; charset=utf-8"
-        )
+    result = json.loads(text)
+    return jres(result)
 
 
 @app.route("/save-excel", methods=["POST"])
 def save_excel():
-    data = request.get_json(force=True)
-    if not data:
-        return jsonify({"error": "데이터가 없습니다."}), 400
+    data = request.get_json(force=True) or {}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "영수증 내역"
+
+    thin = Side(style="thin", color="D0D0D0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+    hdr_font = Font(bold=True, color="FFFFFF", size=11, name="Malgun Gothic")
+
+    headers = ["결제일시", "가맹점명", "주소", "총금액"]
+    widths = [20, 24, 34, 14]
+    for i, (h, w) in enumerate(zip(headers, widths), 1):
+        cell = ws.cell(1, i, h)
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.column_dimensions[cell.column_letter].width = w
+    ws.row_dimensions[1].height = 26
+    ws.freeze_panes = "A2"
+
+    total = data.get("총금액", "")
     try:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "영수증 내역"
+        total = int(total)
+    except (ValueError, TypeError):
+        pass
 
-        thin = Side(style="thin", color="D0D0D0")
-        border = Border(left=thin, right=thin, top=thin, bottom=thin)
-        hdr_fill = PatternFill("solid", fgColor="1E3A5F")
-        hdr_font = Font(bold=True, color="FFFFFF", size=11, name="맑은 고딕")
+    ws.append([data.get("결제일시", ""), data.get("가맹점명", ""),
+               data.get("주소", ""), total])
+    ws.cell(2, 4).number_format = "#,##0"
+    ws.cell(2, 4).alignment = Alignment(horizontal="right")
+    for col in range(1, 5):
+        ws.cell(2, col).border = border
+        ws.cell(2, col).font = Font(name="Malgun Gothic", size=10)
 
-        headers = ["결제일시", "가맹점명", "주소", "총금액"]
-        widths  = [20, 24, 34, 14]
-        for i, (h, w) in enumerate(zip(headers, widths), 1):
-            cell = ws.cell(1, i, h)
-            cell.fill = hdr_fill; cell.font = hdr_font; cell.border = border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            ws.column_dimensions[cell.column_letter].width = w
-        ws.row_dimensions[1].height = 26
-        ws.freeze_panes = "A2"
-
-        total = data.get("총금액", "")
-        try:
-            total = int(total)
-        except (ValueError, TypeError):
-            pass
-        ws.append([data.get("결제일시",""), data.get("가맹점명",""),
-                   data.get("주소",""), total])
-        ws.cell(2, 4).number_format = "#,##0"
-        ws.cell(2, 4).alignment = Alignment(horizontal="right")
-        for col in range(1, 5):
-            ws.cell(2, col).border = border
-            ws.cell(2, col).font = Font(name="맑은 고딕", size=10)
-
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-        return send_file(
-            buf,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name="영수증_내역.xlsx",
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        buf.read(),
+        status=200,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''%EC%98%81%EC%88%98%EC%A6%9D_%EB%82%B4%EC%97%AD.xlsx"},
+    )
 
 
 if __name__ == "__main__":
