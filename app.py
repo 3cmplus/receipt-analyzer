@@ -8,6 +8,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 app = Flask(__name__)
+app.config["JSON_AS_ASCII"] = False   # 한글 JSON 응답 허용
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 PROMPT = """이 영수증 이미지를 꼼꼼히 분석해서 아래 JSON 형식으로만 응답해줘.
@@ -54,9 +55,8 @@ def analyze():
                 PROMPT,
             ],
         )
-        text = response.text.strip()
-
-        # 혹시 붙는 마크다운 코드블록 제거
+        # BOM 및 공백 제거 후 마크다운 코드블록 제거
+        text = response.text.lstrip("﻿").strip()
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
 
